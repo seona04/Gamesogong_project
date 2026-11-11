@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstddef>
-#include <iosfwd>
 #include <optional>
 #include <string>
 #include <vector>
@@ -25,6 +24,13 @@ enum class LocationId : std::size_t {
     Count
 };
 
+enum class Direction {
+    North,
+    East,
+    South,
+    West
+};
+
 enum class RouteAccess {
     Always,
     LowTideOnly
@@ -37,15 +43,15 @@ struct MapPosition {
 
 struct Location {
     LocationId id;
-    char mapSymbol;
-    std::string name;
-    std::string description;
+    std::wstring name;
+    std::wstring description;
     MapPosition position;
 };
 
 struct WorldConnection {
     LocationId first;
     LocationId second;
+    Direction directionFromFirst;
     RouteAccess access;
 };
 
@@ -55,9 +61,9 @@ public:
 
     const Location& GetLocation(LocationId id) const;
     std::vector<LocationId> GetNeighbors(LocationId id) const;
+    std::optional<LocationId> GetNeighborInDirection(LocationId id, Direction direction) const;
+    Direction GetTravelDirection(LocationId from, LocationId to) const;
     bool CanTravel(LocationId from, LocationId to, TidePhase tide) const;
-    RouteAccess GetRouteAccess(LocationId from, LocationId to) const;
-    void PrintMap(std::ostream& output, TidePhase tide, LocationId current) const;
 
 private:
     static constexpr std::size_t LocationCount = static_cast<std::size_t>(LocationId::Count);
@@ -71,7 +77,8 @@ private:
     std::vector<WorldConnection> connections_;
 };
 
-const char* ToString(TidePhase tide);
+const wchar_t* ToString(TidePhase tide);
+const wchar_t* ToString(Direction direction);
 TidePhase NextTide(TidePhase tide);
 
 } // namespace island

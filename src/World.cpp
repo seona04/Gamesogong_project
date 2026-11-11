@@ -29,7 +29,8 @@ World World::CreateHaemuIsland() {
         {LocationId::Harbor, L"해무 포구", L"새벽 시장이 열리는 섬의 중심 포구입니다.", {395, 350}},
         {LocationId::PineForest, L"솔숲길", L"집과 마을을 잇는 숲길입니다. 정원에 쓸 재료를 찾을 수 있습니다.", {245, 475}},
         {LocationId::TidalFlat, L"물비늘 갯벌", L"물이 빠지면 조개와 작은 바다 생물을 살펴볼 수 있습니다.", {585, 450}},
-        {LocationId::WindCape, L"바람곶", L"바람 센 절벽과 부모님의 기록이 남은 오래된 등대가 있습니다.", {620, 205}}
+        {LocationId::WindCape, L"바람곶", L"바람 센 절벽과 부모님의 기록이 남은 오래된 등대가 있습니다.", {620, 205}},
+        {LocationId::River, L"달빛강", L"솔숲에서 흘러온 맑은 강입니다. 은어와 송어가 물살을 거슬러 오릅니다.", {285, 315}}
     }};
 
     std::vector<WorldConnection> connections = {
@@ -37,7 +38,9 @@ World World::CreateHaemuIsland() {
         {LocationId::Home, LocationId::PineForest, Direction::South, RouteAccess::Always},
         {LocationId::Harbor, LocationId::WindCape, Direction::East, RouteAccess::Always},
         {LocationId::Harbor, LocationId::TidalFlat, Direction::South, RouteAccess::LowTideOnly},
-        {LocationId::PineForest, LocationId::TidalFlat, Direction::East, RouteAccess::LowTideOnly}
+        {LocationId::PineForest, LocationId::TidalFlat, Direction::East, RouteAccess::LowTideOnly},
+        {LocationId::PineForest, LocationId::River, Direction::North, RouteAccess::Always},
+        {LocationId::River, LocationId::Harbor, Direction::East, RouteAccess::Always}
     };
 
     return World(std::move(locations), std::move(connections));

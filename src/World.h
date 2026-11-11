@@ -21,6 +21,7 @@ enum class LocationId : std::size_t {
     PineForest,
     TidalFlat,
     WindCape,
+    River,
     Count
 };
 

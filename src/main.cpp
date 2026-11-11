@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#include <windowsx.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -17,11 +18,21 @@ constexpr int WorldMapHeight = 580;
 constexpr int SidePanelWidth = 330;
 constexpr int HomeCanvasWidth = 1200;
 constexpr int HomeCanvasHeight = 800;
+constexpr UINT_PTR FishingTimerId = 1;
 
 enum class SceneMode {
     IslandMap,
     HomeExterior,
-    HomeInterior
+    HomeInterior,
+    RiverFishing,
+    SeaFishing
+};
+
+enum class FishingPhase {
+    Ready,
+    WaitingForBite,
+    Bite,
+    Hooked
 };
 
 island::World g_world = island::World::CreateHaemuIsland();
@@ -37,6 +48,18 @@ int g_interiorPlayerX = 600;
 int g_interiorPlayerY = 620;
 bool g_homeFenceRepaired = false;
 bool g_flowerPlanterPlaced = false;
+int g_fishingPlayerX = 615;
+int g_fishingPlayerY = 660;
+POINT g_fishingBobber{0, 0};
+FishingPhase g_fishingPhase = FishingPhase::Ready;
+std::wstring g_fishingStatus = L"푸른 물을 좌클릭해 낚싯대를 던져보세요.";
+int g_biteDelayMs = 0;
+int g_biteWindowMs = 0;
+int g_reelProgress = 0;
+int g_lineTension = 20;
+int g_riverFishCaught = 0;
+int g_seaFishCaught = 0;
+int g_waterAnimationFrame = 0;
 
 struct MapLayout {
     int left;
@@ -166,6 +189,12 @@ void DrawLine(HDC dc,
     DeleteObject(pen);
 }
 
+void DrawPolyline(HDC dc, const std::vector<POINT>& points, COLORREF color, int width = 2) {
+    for (std::size_t index = 1; index < points.size(); ++index) {
+        DrawLine(dc, points[index - 1], points[index], color, width);
+    }
+}
+
 void DrawPineTree(HDC dc, int x, int y, int size) {
     FillRectangle(dc, RECT{x - size / 10, y, x + size / 10, y + size / 3}, RGB(111, 75, 48), RGB(91, 62, 41));
     FillPolygon(dc,
@@ -224,6 +253,17 @@ void DrawLighthouse(HDC dc, POINT center) {
     DrawLine(dc, POINT{center.x + 22, center.y - 28}, POINT{center.x + 48, center.y - 42}, RGB(250, 211, 116), 2);
 }
 
+void DrawRiverLandmark(HDC dc, POINT center) {
+    FillEllipse(dc, center.x - 57, center.y - 20, center.x + 57, center.y + 27,
+                RGB(91, 170, 194), RGB(63, 126, 153), 2);
+    DrawLine(dc, POINT{center.x - 45, center.y - 4}, POINT{center.x - 4, center.y + 4}, RGB(164, 224, 218), 3);
+    DrawLine(dc, POINT{center.x + 4, center.y + 10}, POINT{center.x + 43, center.y + 2}, RGB(164, 224, 218), 3);
+    FillRectangle(dc, RECT{center.x - 23, center.y - 31, center.x + 24, center.y - 23},
+                  RGB(139, 91, 57), RGB(94, 65, 44), 2);
+    DrawLine(dc, POINT{center.x - 17, center.y - 23}, POINT{center.x - 17, center.y + 14}, RGB(105, 74, 48), 3);
+    DrawLine(dc, POINT{center.x + 17, center.y - 23}, POINT{center.x + 17, center.y + 14}, RGB(105, 74, 48), 3);
+}
+
 void DrawLandmark(HDC dc, const MapLayout& layout, island::LocationId id) {
     const POINT center = ToScreen(layout, g_world.GetLocation(id).position);
     switch (id) {
@@ -232,6 +272,7 @@ void DrawLandmark(HDC dc, const MapLayout& layout, island::LocationId id) {
     case island::LocationId::PineForest: DrawForest(dc, center); break;
     case island::LocationId::TidalFlat: DrawTidalFlat(dc, center); break;
     case island::LocationId::WindCape: DrawLighthouse(dc, center); break;
+    case island::LocationId::River: DrawRiverLandmark(dc, center); break;
     case island::LocationId::Count: break;
     }
 }
@@ -280,7 +321,8 @@ void DrawRoutes(HDC dc, const MapLayout& layout) {
         island::LocationId::Harbor,
         island::LocationId::PineForest,
         island::LocationId::TidalFlat,
-        island::LocationId::WindCape
+        island::LocationId::WindCape,
+        island::LocationId::River
     };
     const auto positionOf = [&layout](island::LocationId id) {
         return ToScreen(layout, g_world.GetLocation(id).position);
@@ -617,6 +659,260 @@ void DrawHomeInterior(HDC dc, RECT client) {
     RestoreDC(dc, saved);
 }
 
+void DrawPebble(HDC dc, int x, int y, int size) {
+    FillEllipse(dc, x - size, y - size / 2, x + size, y + size / 2,
+                RGB(111, 115, 102), RGB(79, 87, 79), 2);
+    DrawLine(dc, POINT{x - size / 2, y - 1}, POINT{x + size / 3, y - size / 5},
+             RGB(155, 158, 137), 2);
+}
+
+void DrawReeds(HDC dc, int x, int y, int height) {
+    for (int index = 0; index < 4; ++index) {
+        const int offset = (index - 2) * 9;
+        DrawLine(dc, POINT{x + offset, y}, POINT{x + offset - 4, y - height + index * 4},
+                 RGB(62, 111, 68), 4);
+        FillEllipse(dc, x + offset - 8, y - height + index * 4 - 7,
+                    x + offset + 1, y - height + index * 4 + 8,
+                    RGB(148, 107, 62), RGB(111, 78, 48), 1);
+        DrawLine(dc, POINT{x + offset - 2, y - height / 2},
+                 POINT{x + offset + 10, y - height / 2 - 8}, RGB(92, 137, 68), 3);
+    }
+}
+
+void DrawFishSilhouette(HDC dc, int x, int y, COLORREF color, int size) {
+    FillEllipse(dc, x - size, y - size / 2, x + size, y + size / 2,
+                color, RGB(46, 105, 133), 1);
+    FillPolygon(dc, {{x + size - 2, y}, {x + size + size / 2, y - size / 2},
+                     {x + size + size / 2, y + size / 2}},
+                color, RGB(46, 105, 133), 1);
+    FillEllipse(dc, x - size / 2, y - 2, x - size / 2 + 4, y + 2,
+                RGB(234, 229, 194), RGB(234, 229, 194));
+}
+
+void DrawSeaDock(HDC dc) {
+    FillEllipse(dc, 874, 472, 1064, 529, RGB(40, 116, 132), RGB(40, 116, 132));
+    FillRectangle(dc, RECT{927, 306, 1014, 537}, RGB(129, 83, 54), RGB(78, 55, 43), 3);
+    for (int y = 316; y < 530; y += 28) {
+        FillRectangle(dc, RECT{932, y, 1009, y + 21},
+                      y % 2 == 0 ? RGB(159, 106, 68) : RGB(143, 92, 59),
+                      RGB(92, 62, 44), 2);
+    }
+    FillRectangle(dc, RECT{918, 331, 930, 525}, RGB(91, 62, 43), RGB(70, 49, 38), 2);
+    FillRectangle(dc, RECT{1010, 331, 1022, 525}, RGB(91, 62, 43), RGB(70, 49, 38), 2);
+    DrawLine(dc, POINT{924, 340}, POINT{1016, 340}, RGB(191, 140, 90), 4);
+    DrawLine(dc, POINT{924, 400}, POINT{1016, 400}, RGB(191, 140, 90), 4);
+}
+
+void DrawFishingScene(HDC dc, RECT client) {
+    const bool atSea = g_scene == SceneMode::SeaFishing;
+    const int saved = SaveDC(dc);
+    SetMapMode(dc, MM_ANISOTROPIC);
+    SetWindowExtEx(dc, HomeCanvasWidth, HomeCanvasHeight, nullptr);
+    SetViewportExtEx(dc, std::max(1L, client.right), std::max(1L, client.bottom), nullptr);
+
+    if (atSea) {
+        FillRectangle(dc, RECT{0, 0, 1200, 800}, RGB(37, 111, 152), RGB(37, 111, 152));
+        FillRectangle(dc, RECT{0, 90, 1200, 448}, RGB(46, 129, 166), RGB(46, 129, 166));
+        for (int row = 0; row < 12; ++row) {
+            const int y = 39 + row * 35;
+            const int phase = (g_waterAnimationFrame * 3 + row * 17) % 45;
+            for (int x = -45 + phase + (row % 2) * 56; x < 1200; x += 144) {
+                DrawLine(dc, POINT{x, y}, POINT{x + 34, y - 3}, RGB(81, 165, 190), 3);
+                DrawLine(dc, POINT{x + 34, y - 3}, POINT{x + 61, y}, RGB(115, 193, 202), 2);
+                if ((row + x / 144) % 4 == 0) {
+                    FillEllipse(dc, x + 72, y + 11, x + 78, y + 15,
+                                RGB(183, 207, 184), RGB(183, 207, 184));
+                }
+            }
+        }
+        FillRectangle(dc, RECT{0, 0, 1200, 28}, RGB(47, 91, 104), RGB(47, 91, 104));
+        std::vector<POINT> coast = {
+            {0, 468}, {120, 480}, {240, 461}, {360, 494}, {480, 477},
+            {600, 513}, {720, 493}, {840, 478}, {960, 502}, {1080, 474}, {1200, 489}
+        };
+        std::vector<POINT> beach = coast;
+        beach.push_back(POINT{1200, 800});
+        beach.push_back(POINT{0, 800});
+        FillPolygon(dc, beach, RGB(216, 183, 124), RGB(173, 139, 91), 2);
+        DrawPolyline(dc, coast, RGB(242, 231, 195), 12);
+        DrawPolyline(dc, coast, RGB(255, 250, 222), 4);
+        for (int row = 0; row < 8; ++row) {
+            const int y = 533 + row * 31;
+            for (int x = 19 + ((row % 2) * 27); x < 1180; x += 58) {
+                const int seed = (x * 3 + y * 5) % 19;
+                if (seed < 5) {
+                    FillEllipse(dc, x, y, x + 4, y + 3,
+                                RGB(244, 219, 169), RGB(244, 219, 169));
+                } else if (seed == 8) {
+                    DrawLine(dc, POINT{x, y + 6}, POINT{x + 4, y - 2}, RGB(118, 138, 79), 2);
+                }
+            }
+        }
+        DrawPebble(dc, 144, 588, 23);
+        DrawPebble(dc, 193, 602, 15);
+        DrawPebble(dc, 1079, 563, 20);
+        DrawLine(dc, POINT{277, 640}, POINT{339, 626}, RGB(121, 79, 49), 8);
+        DrawLine(dc, POINT{292, 637}, POINT{304, 657}, RGB(101, 71, 49), 5);
+        DrawLine(dc, POINT{326, 629}, POINT{338, 651}, RGB(101, 71, 49), 5);
+        DrawSeaDock(dc);
+        DrawReeds(dc, 65, 563, 65);
+        DrawReeds(dc, 1127, 615, 52);
+        FillEllipse(dc, 495, 564, 521, 580, RGB(232, 215, 169), RGB(170, 149, 111), 2);
+        FillEllipse(dc, 502, 568, 514, 576, RGB(214, 133, 115), RGB(170, 104, 91), 1);
+    } else {
+        FillRectangle(dc, RECT{0, 0, 1200, 800}, RGB(114, 166, 95), RGB(114, 166, 95));
+        for (int y = 18; y < 790; y += 29) {
+            for (int x = 14; x < 1190; x += 37) {
+                const int seed = (x * 5 + y * 9) % 23;
+                if (seed < 5) {
+                    DrawLine(dc, POINT{x, y + 5}, POINT{x - 4, y - 3}, RGB(91, 146, 81), 2);
+                    DrawLine(dc, POINT{x, y + 5}, POINT{x + 5, y - 1}, RGB(141, 183, 101), 2);
+                } else if (seed == 9) {
+                    FillEllipse(dc, x, y, x + 4, y + 4,
+                                RGB(221, 207, 147), RGB(221, 207, 147));
+                }
+            }
+        }
+        FillRectangle(dc, RECT{0, 197, 1200, 557}, RGB(35, 111, 151), RGB(35, 111, 151));
+        for (int row = 0; row < 11; ++row) {
+            const int y = 236 + row * 27;
+            const int phase = (g_waterAnimationFrame * 2 + row * 13) % 37;
+            for (int x = -35 + phase + (row % 2) * 48; x < 1200; x += 128) {
+                DrawLine(dc, POINT{x, y}, POINT{x + 32, y - 2}, RGB(92, 180, 197), 3);
+                DrawLine(dc, POINT{x + 32, y - 2}, POINT{x + 51, y + 1}, RGB(125, 199, 205), 2);
+                if ((row + x / 128) % 5 == 0) {
+                    FillEllipse(dc, x + 71, y + 10, x + 77, y + 14,
+                                RGB(177, 209, 192), RGB(177, 209, 192));
+                }
+            }
+        }
+        std::vector<POINT> upperBank = {
+            {0, 0}, {1200, 0}, {1200, 237}, {1080, 220}, {975, 242},
+            {825, 218}, {680, 240}, {520, 215}, {380, 238}, {220, 214},
+            {110, 237}, {0, 219}
+        };
+        FillPolygon(dc, upperBank, RGB(83, 139, 75), RGB(70, 119, 68), 2);
+        std::vector<POINT> upperEdge = {
+            {0, 219}, {110, 237}, {220, 214}, {380, 238}, {520, 215},
+            {680, 240}, {825, 218}, {975, 242}, {1080, 220}, {1200, 237}
+        };
+        DrawPolyline(dc, upperEdge, RGB(164, 143, 99), 9);
+        DrawPolyline(dc, upperEdge, RGB(216, 192, 135), 3);
+
+        std::vector<POINT> lowerBank = {
+            {0, 510}, {120, 530}, {250, 511}, {390, 536}, {510, 512},
+            {660, 540}, {810, 513}, {960, 536}, {1100, 512}, {1200, 530},
+            {1200, 800}, {0, 800}
+        };
+        FillPolygon(dc, lowerBank, RGB(105, 158, 86), RGB(76, 126, 73), 2);
+        std::vector<POINT> lowerEdge = {
+            {0, 510}, {120, 530}, {250, 511}, {390, 536}, {510, 512},
+            {660, 540}, {810, 513}, {960, 536}, {1100, 512}, {1200, 530}
+        };
+        DrawPolyline(dc, lowerEdge, RGB(163, 144, 101), 9);
+        DrawPolyline(dc, lowerEdge, RGB(217, 196, 141), 3);
+
+        DrawPineTree(dc, 108, 215, 125);
+        DrawPineTree(dc, 260, 207, 100);
+        DrawPineTree(dc, 1031, 208, 119);
+        DrawPineTree(dc, 1151, 207, 101);
+        DrawReeds(dc, 146, 555, 65);
+        DrawReeds(dc, 354, 561, 57);
+        DrawReeds(dc, 738, 561, 63);
+        DrawReeds(dc, 1110, 554, 58);
+        DrawPebble(dc, 258, 575, 19);
+        DrawPebble(dc, 427, 574, 13);
+        DrawPebble(dc, 797, 580, 21);
+        DrawPebble(dc, 1084, 573, 16);
+        DrawFlower(dc, 188, 647, RGB(230, 143, 134));
+        DrawFlower(dc, 321, 699, RGB(232, 209, 134));
+        DrawFlower(dc, 934, 661, RGB(191, 132, 174));
+        DrawFlower(dc, 1080, 711, RGB(235, 179, 120));
+
+        FillRectangle(dc, RECT{881, 472, 981, 572}, RGB(128, 86, 55), RGB(82, 58, 43), 3);
+        for (int plank = 0; plank < 4; ++plank) {
+            FillRectangle(dc, RECT{888 + plank * 22, 478, 907 + plank * 22, 565},
+                          plank % 2 == 0 ? RGB(159, 107, 67) : RGB(142, 94, 60),
+                          RGB(99, 66, 45), 2);
+        }
+        DrawLine(dc, POINT{879, 488}, POINT{982, 488}, RGB(194, 147, 94), 4);
+        DrawLine(dc, POINT{879, 557}, POINT{982, 557}, RGB(194, 147, 94), 4);
+        DrawFishSilhouette(dc, 344, 356, RGB(89, 158, 171), 24);
+        DrawFishSilhouette(dc, 747, 424, RGB(107, 178, 185), 19);
+        DrawFishSilhouette(dc, 1015, 300, RGB(104, 168, 180), 17);
+    }
+
+    DrawHomeCharacter(dc, g_fishingPlayerX, g_fishingPlayerY);
+    const POINT rodHand{g_fishingPlayerX + 12, g_fishingPlayerY - 38};
+    const POINT rodTip{g_fishingPlayerX + 70, g_fishingPlayerY - 114};
+    DrawLine(dc, rodHand, rodTip, RGB(104, 65, 43), 5);
+    DrawLine(dc, POINT{rodTip.x - 2, rodTip.y + 2}, rodTip, RGB(210, 173, 112), 2);
+    if (g_fishingPhase != FishingPhase::Ready) {
+        DrawLine(dc, rodTip, g_fishingBobber, RGB(225, 229, 207), 2);
+        const int ripple = 10 + (g_waterAnimationFrame % 4) * 3;
+        DrawRing(dc, g_fishingBobber.x - ripple, g_fishingBobber.y - 5,
+                 g_fishingBobber.x + ripple, g_fishingBobber.y + 5,
+                 g_fishingPhase == FishingPhase::Bite ? RGB(246, 226, 143) : RGB(137, 219, 221), 2);
+        FillEllipse(dc, g_fishingBobber.x - 7, g_fishingBobber.y - 11,
+                    g_fishingBobber.x + 7, g_fishingBobber.y + 7,
+                    g_fishingPhase == FishingPhase::Bite ? RGB(239, 91, 81) : RGB(248, 233, 202),
+                    RGB(89, 83, 65), 2);
+        FillRectangle(dc, RECT{g_fishingBobber.x - 2, g_fishingBobber.y - 1,
+                               g_fishingBobber.x + 3, g_fishingBobber.y + 6},
+                      RGB(232, 91, 78), RGB(182, 68, 61), 1);
+        if (g_fishingPhase == FishingPhase::Bite && g_waterAnimationFrame % 8 < 5) {
+            FillEllipse(dc, g_fishingBobber.x - 17, g_fishingBobber.y - 40,
+                        g_fishingBobber.x + 17, g_fishingBobber.y - 8,
+                        RGB(248, 216, 114), RGB(126, 92, 52), 2);
+            DrawTextBlock(dc, L"!", RECT{g_fishingBobber.x - 11, g_fishingBobber.y - 40,
+                                          g_fishingBobber.x + 11, g_fishingBobber.y - 12},
+                          RGB(105, 66, 46), 20, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
+    FillRectangle(dc, RECT{22, 20, 405, 159}, RGB(250, 246, 222), RGB(139, 108, 70), 3);
+    const std::wstring title = atSea ? L"해무 앞바다 · 바다 낚시" : L"달빛강 · 민물 낚시";
+    DrawTextBlock(dc, title, RECT{42, 34, 384, 66}, RGB(47, 82, 84), 23, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"WASD  강변 이동", RECT{42, 77, 384, 101}, RGB(79, 81, 67), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"좌클릭  던지기 · 감기", RECT{42, 103, 384, 127}, RGB(79, 81, 67), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"우클릭  줄 장력 풀기   ·   Esc  지도", RECT{42, 129, 384, 153}, RGB(79, 81, 67), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    FillRectangle(dc, RECT{916, 20, 1178, 140}, RGB(250, 246, 222), RGB(139, 108, 70), 3);
+    DrawTextBlock(dc, L"오늘의 어획", RECT{936, 34, 1158, 64}, RGB(74, 86, 62), 20, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"민물고기  " + std::to_wstring(g_riverFishCaught) + L"마리",
+                  RECT{936, 74, 1158, 98}, RGB(61, 119, 137), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"바닷물고기  " + std::to_wstring(g_seaFishCaught) + L"마리",
+                  RECT{936, 103, 1158, 127}, RGB(61, 119, 137), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    if (g_fishingPhase == FishingPhase::Hooked) {
+        FillRectangle(dc, RECT{1061, 187, 1178, 616}, RGB(249, 242, 213), RGB(139, 108, 70), 3);
+        DrawTextBlock(dc, L"낚싯줄", RECT{1073, 198, 1166, 226}, RGB(74, 86, 62), 17, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        FillRectangle(dc, RECT{1085, 239, 1155, 554}, RGB(47, 113, 135), RGB(83, 71, 53), 3);
+        FillRectangle(dc, RECT{1092, 246, 1148, 547}, RGB(174, 215, 193), RGB(122, 147, 120), 1);
+        const int progressTop = 543 - (g_reelProgress * 292 / 100);
+        FillRectangle(dc, RECT{1094, progressTop, 1146, 544},
+                      g_reelProgress >= 80 ? RGB(113, 177, 118) : RGB(92, 177, 185),
+                      RGB(75, 135, 138), 1);
+        const int markerY = 268 + ((g_waterAnimationFrame * 4) % 250);
+        FillPolygon(dc, {{1074, markerY}, {1088, markerY - 9}, {1088, markerY + 9}},
+                    RGB(242, 178, 80), RGB(135, 92, 50), 1);
+        DrawTextBlock(dc, std::to_wstring(g_reelProgress) + L"%", RECT{1073, 559, 1166, 585},
+                      RGB(74, 86, 62), 16, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextBlock(dc, L"줄 장력", RECT{973, 620, 1063, 643},
+                      RGB(74, 86, 62), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        FillRectangle(dc, RECT{1068, 622, 1175, 643}, RGB(227, 211, 174), RGB(113, 92, 65), 2);
+        const int tensionWidth = g_lineTension * 101 / 100;
+        FillRectangle(dc, RECT{1071, 625, 1071 + tensionWidth, 640},
+                      g_lineTension > 75 ? RGB(212, 89, 75) : RGB(104, 160, 111),
+                      g_lineTension > 75 ? RGB(173, 64, 56) : RGB(77, 125, 88), 1);
+    }
+
+    FillRectangle(dc, RECT{281, 728, 919, 786}, RGB(250, 246, 222), RGB(139, 108, 70), 2);
+    DrawTextBlock(dc, g_fishingStatus, RECT{300, 739, 900, 775},
+                  RGB(101, 76, 51), 16, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    RestoreDC(dc, saved);
+}
+
 void DrawLocationLabel(HDC dc, const MapLayout& layout, island::LocationId id) {
     const island::Location& location = g_world.GetLocation(id);
     const POINT center = ToScreen(layout, location.position);
@@ -690,6 +986,10 @@ void DrawGame(HDC dc, RECT client) {
         DrawHomeInterior(dc, client);
         return;
     }
+    if (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing) {
+        DrawFishingScene(dc, client);
+        return;
+    }
 
     const int panelLeft = client.right - SidePanelWidth - 24;
     const int mapAreaWidth = panelLeft - 40;
@@ -710,7 +1010,8 @@ void DrawGame(HDC dc, RECT client) {
         island::LocationId::Harbor,
         island::LocationId::PineForest,
         island::LocationId::TidalFlat,
-        island::LocationId::WindCape
+        island::LocationId::WindCape,
+        island::LocationId::River
     };
     for (island::LocationId id : ids) {
         DrawLandmark(dc, layout, id);
@@ -806,12 +1107,193 @@ void ReturnToIslandMap(HWND window) {
     InvalidateRect(window, nullptr, TRUE);
 }
 
+void BeginFishingScene(HWND window, SceneMode scene) {
+    g_scene = scene;
+    g_fishingPlayerX = 615;
+    g_fishingPlayerY = 660;
+    g_fishingPhase = FishingPhase::Ready;
+    g_fishingBobber = POINT{0, 0};
+    g_reelProgress = 0;
+    g_lineTension = 20;
+    g_fishingStatus = scene == SceneMode::RiverFishing
+        ? L"강물 위를 좌클릭해 찌를 던져보세요."
+        : L"바다의 푸른 물을 좌클릭해 찌를 던져보세요.";
+    InvalidateRect(window, nullptr, TRUE);
+}
+
+void ReturnFromFishingToMap(HWND window) {
+    g_scene = SceneMode::IslandMap;
+    g_status = g_world.GetLocation(g_currentLocation).description;
+    InvalidateRect(window, nullptr, TRUE);
+}
+
+void MoveFishingPlayer(HWND window, int deltaX, int deltaY) {
+    const int nextX = std::clamp(g_fishingPlayerX + deltaX, 74, 1126);
+    const int shoreLimit = g_scene == SceneMode::SeaFishing ? 522 : 552;
+    const int nextY = std::clamp(g_fishingPlayerY + deltaY, shoreLimit, 735);
+    const bool blockedByRiverPier = g_scene == SceneMode::RiverFishing &&
+                                    nextX > 866 && nextX < 995 && nextY < 588;
+    const bool blockedBySeaDock = g_scene == SceneMode::SeaFishing &&
+                                  nextX > 907 && nextX < 1032 && nextY < 554;
+    if (blockedByRiverPier || blockedBySeaDock) {
+        return;
+    }
+    g_fishingPlayerX = nextX;
+    g_fishingPlayerY = nextY;
+    InvalidateRect(window, nullptr, FALSE);
+}
+
+POINT FishingCanvasPoint(HWND window, LPARAM lParam) {
+    RECT client{};
+    GetClientRect(window, &client);
+    const LONG width = std::max(1L, client.right);
+    const LONG height = std::max(1L, client.bottom);
+    return POINT{
+        static_cast<LONG>(GET_X_LPARAM(lParam)) * HomeCanvasWidth / width,
+        static_cast<LONG>(GET_Y_LPARAM(lParam)) * HomeCanvasHeight / height
+    };
+}
+
+bool IsFishingWaterPoint(SceneMode scene, POINT point) {
+    if (scene == SceneMode::RiverFishing) {
+        return point.x > 25 && point.x < 1175 && point.y >= 240 && point.y <= 515;
+    }
+    return point.x > 25 && point.x < 1175 && point.y > 30 && point.y < 464;
+}
+
+void CatchFish(HWND window) {
+    const bool atSea = g_scene == SceneMode::SeaFishing;
+    const wchar_t* riverFish[] = {L"은어", L"무늬송어", L"은빛 잉어"};
+    const wchar_t* seaFish[] = {L"전갱이", L"참돔", L"고등어"};
+    std::wstring caughtName;
+    if (atSea) {
+        caughtName = seaFish[g_seaFishCaught % 3];
+        ++g_seaFishCaught;
+    } else {
+        caughtName = riverFish[g_riverFishCaught % 3];
+        ++g_riverFishCaught;
+    }
+    g_fishingStatus = caughtName + L"를 낚았습니다! 어획 기록에 담았습니다.";
+    g_fishingPhase = FishingPhase::Ready;
+    g_reelProgress = 0;
+    g_lineTension = 20;
+    InvalidateRect(window, nullptr, FALSE);
+}
+
+void LoseFish(HWND window) {
+    g_fishingStatus = L"물고기가 빠져나갔습니다. 물을 좌클릭해 다시 던져보세요.";
+    g_fishingPhase = FishingPhase::Ready;
+    g_reelProgress = 0;
+    g_lineTension = 20;
+    InvalidateRect(window, nullptr, FALSE);
+}
+
+void HandleFishingMouse(HWND window, bool leftButton, POINT point) {
+    if (leftButton) {
+        switch (g_fishingPhase) {
+        case FishingPhase::Ready:
+            if (!IsFishingWaterPoint(g_scene, point)) {
+                g_fishingStatus = L"물결이 보이는 곳을 좌클릭해 찌를 던지세요.";
+                InvalidateRect(window, nullptr, FALSE);
+                return;
+            }
+            g_fishingBobber = point;
+            g_fishingPhase = FishingPhase::WaitingForBite;
+            g_biteDelayMs = 2600 + static_cast<int>(GetTickCount64() % 3400);
+            g_fishingStatus = L"찌가 물 위에 있습니다. 입질이 올 때까지 잠시 기다리세요.";
+            InvalidateRect(window, nullptr, FALSE);
+            return;
+        case FishingPhase::WaitingForBite:
+            g_fishingStatus = L"물고기가 다가오는 중입니다. 찌가 흔들리면 좌클릭하세요.";
+            InvalidateRect(window, nullptr, FALSE);
+            return;
+        case FishingPhase::Bite:
+            g_fishingPhase = FishingPhase::Hooked;
+            g_reelProgress = 0;
+            g_lineTension = 28;
+            g_fishingStatus = L"걸었습니다! 좌클릭으로 감고 우클릭으로 줄 장력을 낮추세요.";
+            InvalidateRect(window, nullptr, FALSE);
+            return;
+        case FishingPhase::Hooked:
+            g_reelProgress = std::min(100, g_reelProgress + 20);
+            g_lineTension = std::min(100, g_lineTension + 23);
+            if (g_lineTension >= 100) {
+                LoseFish(window);
+            } else if (g_reelProgress >= 100) {
+                CatchFish(window);
+            } else {
+                g_fishingStatus = L"릴을 감았습니다. 장력이 높아지면 우클릭으로 줄을 풀어주세요.";
+                InvalidateRect(window, nullptr, FALSE);
+            }
+            return;
+        }
+    } else if (g_fishingPhase == FishingPhase::Hooked) {
+        g_lineTension = std::max(8, g_lineTension - 34);
+        g_fishingStatus = L"줄의 장력을 낮췄습니다. 좌클릭으로 계속 감아올리세요.";
+        InvalidateRect(window, nullptr, FALSE);
+    }
+}
+
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+    case WM_CREATE:
+        SetTimer(window, FishingTimerId, 100, nullptr);
+        return 0;
+
     case WM_ERASEBKGND:
         return 1;
 
+    case WM_TIMER:
+        if (wParam == FishingTimerId &&
+            (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing)) {
+            ++g_waterAnimationFrame;
+            if (g_fishingPhase == FishingPhase::WaitingForBite) {
+                g_biteDelayMs -= 100;
+                if (g_biteDelayMs <= 0) {
+                    g_fishingPhase = FishingPhase::Bite;
+                    g_biteWindowMs = 2600;
+                    g_fishingStatus = L"입질입니다! 찌가 흔들릴 때 좌클릭해 낚아채세요.";
+                }
+            } else if (g_fishingPhase == FishingPhase::Bite) {
+                g_biteWindowMs -= 100;
+                if (g_biteWindowMs <= 0) {
+                    g_fishingPhase = FishingPhase::Ready;
+                    g_fishingStatus = L"입질을 놓쳤습니다. 물을 좌클릭해 다시 던져보세요.";
+                }
+            }
+            InvalidateRect(window, nullptr, FALSE);
+        }
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        if (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing) {
+            HandleFishingMouse(window, true, FishingCanvasPoint(window, lParam));
+            return 0;
+        }
+        return DefWindowProcW(window, message, wParam, lParam);
+
+    case WM_RBUTTONDOWN:
+        if (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing) {
+            HandleFishingMouse(window, false, FishingCanvasPoint(window, lParam));
+            return 0;
+        }
+        return DefWindowProcW(window, message, wParam, lParam);
+
     case WM_KEYDOWN:
+        if (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing) {
+            switch (wParam) {
+            case VK_UP: case 'W': MoveFishingPlayer(window, 0, -22); return 0;
+            case VK_RIGHT: case 'D': MoveFishingPlayer(window, 22, 0); return 0;
+            case VK_DOWN: case 'S': MoveFishingPlayer(window, 0, 22); return 0;
+            case VK_LEFT: case 'A': MoveFishingPlayer(window, -22, 0); return 0;
+            case 'M':
+            case VK_ESCAPE:
+                ReturnFromFishingToMap(window);
+                return 0;
+            default:
+                return 0;
+            }
+        }
         if (g_scene == SceneMode::HomeExterior) {
             switch (wParam) {
             case VK_UP: case 'W': MoveHomePlayer(window, 0, -22); return 0;
@@ -898,6 +1380,13 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
                 g_homePlayerX = 660;
                 g_homePlayerY = 710;
                 g_homeStatus = L"부모님의 정원에 도착했습니다. 낡은 집을 천천히 둘러보세요.";
+            } else if (g_currentLocation == island::LocationId::River) {
+                BeginFishingScene(window, SceneMode::RiverFishing);
+                return 0;
+            } else if (g_currentLocation == island::LocationId::Harbor ||
+                       g_currentLocation == island::LocationId::TidalFlat) {
+                BeginFishingScene(window, SceneMode::SeaFishing);
+                return 0;
             } else {
                 g_status = std::wstring(L"주변을 살펴봅니다. ") + g_world.GetLocation(g_currentLocation).description;
             }
@@ -922,6 +1411,7 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
     }
 
     case WM_DESTROY:
+        KillTimer(window, FishingTimerId);
         PostQuitMessage(0);
         return 0;
 

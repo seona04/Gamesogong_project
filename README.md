@@ -1,6 +1,6 @@
 # Gamesogong_project
 
-`파도 끝의 집`의 2D 월드 탐험 프로토타입입니다. Visual Studio 2022와 C++17로 만든 Win32/GDI 창에서 해무섬을 위에서 내려다보는 지도 형태로 보여줍니다. 외부 그래픽 라이브러리 없이 Windows SDK만 사용합니다.
+`파도 끝의 집`의 2D 월드 탐험 프로토타입입니다. Visual Studio 18과 C++17로 만든 Win32/GDI 창에서 해무섬을 위에서 내려다보는 지도 형태로 보여줍니다. 외부 그래픽 라이브러리 없이 Windows SDK만 사용합니다.
 
 ## 화면에 생성되는 월드
 
@@ -14,9 +14,9 @@
 
 ## Visual Studio에서 실행
 
-1. `Gamesogong_project.sln`을 Visual Studio 2022에서 엽니다.
-2. 플랫폼을 `x64`로 선택합니다.
-3. `Gamesogong_project`를 시작 프로젝트로 지정하고 `F5` 또는 `Ctrl+F5`로 실행합니다.
+1. `Gamesogong_project.sln`을 Visual Studio 18에서 엽니다.
+2. 구성은 `Release`, 플랫폼은 `x64`로 선택합니다.
+3. `Gamesogong_project`를 시작 프로젝트로 지정하고 `Ctrl+F5`로 실행합니다.
 
 ## 조작
 

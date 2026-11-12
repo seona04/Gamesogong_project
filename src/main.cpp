@@ -4,6 +4,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -25,7 +26,8 @@ enum class SceneMode {
     HomeExterior,
     HomeInterior,
     RiverFishing,
-    SeaFishing
+    SeaFishing,
+    JournalDashboard
 };
 
 enum class FishingPhase {
@@ -59,7 +61,12 @@ int g_reelProgress = 0;
 int g_lineTension = 20;
 int g_riverFishCaught = 0;
 int g_seaFishCaught = 0;
+std::array<int, 6> g_fishInventory{};
 int g_waterAnimationFrame = 0;
+bool g_waterAnimationEnabled = true;
+bool g_fishingAssistEnabled = false;
+bool g_showTensionMeter = true;
+SceneMode g_dashboardReturnScene = SceneMode::IslandMap;
 
 struct MapLayout {
     int left;
@@ -570,6 +577,7 @@ void DrawHomeExterior(HDC dc, RECT client) {
     DrawTextBlock(dc, L"F  꽃 심기", RECT{923, 137, 1156, 161}, RGB(83, 82, 65), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"E / Enter  문 열기", RECT{923, 167, 1156, 191}, RGB(83, 82, 65), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"M  섬 지도", RECT{923, 197, 1156, 221}, RGB(83, 82, 65), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"I  인벤토리 · 주민 안내", RECT{923, 224, 1156, 248}, RGB(83, 82, 65), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     std::wstring prompt;
     if (std::abs(g_homePlayerX - 600) < 95 && std::abs(g_homePlayerY - 470) < 95) {
@@ -653,6 +661,7 @@ void DrawHomeInterior(HDC dc, RECT client) {
     DrawTextBlock(dc, L"방향키 / WASD  이동", RECT{923, 80, 1156, 104}, RGB(83, 82, 65), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"E / Enter  물때 기록장 보기", RECT{923, 112, 1156, 136}, RGB(83, 82, 65), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"Esc  정원으로 나가기", RECT{923, 144, 1156, 168}, RGB(83, 82, 65), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"I  인벤토리 · 주민 안내", RECT{923, 174, 1156, 198}, RGB(83, 82, 65), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     FillRectangle(dc, RECT{357, 737, 843, 785}, RGB(250, 246, 222), RGB(141, 113, 77), 2);
     DrawTextBlock(dc, g_interiorStatus, RECT{373, 746, 827, 776}, RGB(107, 77, 54), 15, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
@@ -870,12 +879,13 @@ void DrawFishingScene(HDC dc, RECT client) {
         }
     }
 
-    FillRectangle(dc, RECT{22, 20, 405, 159}, RGB(250, 246, 222), RGB(139, 108, 70), 3);
+    FillRectangle(dc, RECT{22, 20, 405, 185}, RGB(250, 246, 222), RGB(139, 108, 70), 3);
     const std::wstring title = atSea ? L"해무 앞바다 · 바다 낚시" : L"달빛강 · 민물 낚시";
     DrawTextBlock(dc, title, RECT{42, 34, 384, 66}, RGB(47, 82, 84), 23, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"WASD  강변 이동", RECT{42, 77, 384, 101}, RGB(79, 81, 67), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"좌클릭  던지기 · 감기", RECT{42, 103, 384, 127}, RGB(79, 81, 67), 15, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"우클릭  줄 장력 풀기   ·   Esc  지도", RECT{42, 129, 384, 153}, RGB(79, 81, 67), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"I  인벤토리 · 주민 안내", RECT{42, 155, 384, 178}, RGB(79, 81, 67), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     FillRectangle(dc, RECT{916, 20, 1178, 140}, RGB(250, 246, 222), RGB(139, 108, 70), 3);
     DrawTextBlock(dc, L"오늘의 어획", RECT{936, 34, 1158, 64}, RGB(74, 86, 62), 20, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -898,18 +908,235 @@ void DrawFishingScene(HDC dc, RECT client) {
                     RGB(242, 178, 80), RGB(135, 92, 50), 1);
         DrawTextBlock(dc, std::to_wstring(g_reelProgress) + L"%", RECT{1073, 559, 1166, 585},
                       RGB(74, 86, 62), 16, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        DrawTextBlock(dc, L"줄 장력", RECT{973, 620, 1063, 643},
-                      RGB(74, 86, 62), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        FillRectangle(dc, RECT{1068, 622, 1175, 643}, RGB(227, 211, 174), RGB(113, 92, 65), 2);
-        const int tensionWidth = g_lineTension * 101 / 100;
-        FillRectangle(dc, RECT{1071, 625, 1071 + tensionWidth, 640},
-                      g_lineTension > 75 ? RGB(212, 89, 75) : RGB(104, 160, 111),
-                      g_lineTension > 75 ? RGB(173, 64, 56) : RGB(77, 125, 88), 1);
+        if (g_showTensionMeter) {
+            DrawTextBlock(dc, L"줄 장력", RECT{973, 620, 1063, 643},
+                          RGB(74, 86, 62), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            FillRectangle(dc, RECT{1068, 622, 1175, 643}, RGB(227, 211, 174), RGB(113, 92, 65), 2);
+            const int tensionWidth = g_lineTension * 101 / 100;
+            FillRectangle(dc, RECT{1071, 625, 1071 + tensionWidth, 640},
+                          g_lineTension > 75 ? RGB(212, 89, 75) : RGB(104, 160, 111),
+                          g_lineTension > 75 ? RGB(173, 64, 56) : RGB(77, 125, 88), 1);
+        }
     }
 
     FillRectangle(dc, RECT{281, 728, 919, 786}, RGB(250, 246, 222), RGB(139, 108, 70), 2);
     DrawTextBlock(dc, g_fishingStatus, RECT{300, 739, 900, 775},
                   RGB(101, 76, 51), 16, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"I  인벤토리 · 지도 · 주민", RECT{922, 738, 1177, 775},
+                  RGB(250, 246, 222), 14, true, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    RestoreDC(dc, saved);
+}
+
+POINT MiniMapPoint(const MapLayout& layout, island::LocationId location) {
+    return ToScreen(layout, g_world.GetLocation(location).position);
+}
+
+void DrawInventoryIslandMap(HDC dc) {
+    const RECT frame{42, 510, 366, 768};
+    FillRectangle(dc, frame, RGB(55, 123, 146), RGB(139, 108, 70), 2);
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, frame.left + 2, frame.top + 2, frame.right - 2, frame.bottom - 2);
+
+    MapLayout layout{
+        frame.left + 8,
+        frame.top + 7,
+        0.42,
+        0.265,
+        frame.right + 18
+    };
+    DrawIslandBackground(dc, layout, frame.top + 166);
+    DrawRoutes(dc, layout);
+    const std::array<island::LocationId, 6> locations = {
+        island::LocationId::Home,
+        island::LocationId::Harbor,
+        island::LocationId::PineForest,
+        island::LocationId::TidalFlat,
+        island::LocationId::WindCape,
+        island::LocationId::River
+    };
+    for (island::LocationId location : locations) {
+        const POINT point = MiniMapPoint(layout, location);
+        const bool current = location == g_currentLocation;
+        FillEllipse(dc, point.x - (current ? 8 : 5), point.y - (current ? 8 : 5),
+                    point.x + (current ? 8 : 5), point.y + (current ? 8 : 5),
+                    current ? RGB(246, 183, 75) : RGB(250, 242, 209),
+                    current ? RGB(107, 73, 47) : RGB(63, 104, 85), 2);
+        if (current) {
+            DrawRing(dc, point.x - 12, point.y - 12, point.x + 12, point.y + 12,
+                     RGB(246, 183, 75), 2);
+        }
+    }
+    RestoreDC(dc, saved);
+
+    const std::array<const wchar_t*, 6> labels = {
+        L"부모님의 집", L"해무 포구", L"솔숲길",
+        L"물비늘 갯벌", L"바람곶", L"달빛강"
+    };
+    for (std::size_t index = 0; index < locations.size(); ++index) {
+        const int column = static_cast<int>(index % 2);
+        const int row = static_cast<int>(index / 2);
+        const int x = frame.left + 12 + column * 160;
+        const int y = 679 + row * 27;
+        const bool current = locations[index] == g_currentLocation;
+        FillEllipse(dc, x, y + 5, x + 11, y + 16,
+                    current ? RGB(224, 151, 65) : RGB(90, 151, 119),
+                    current ? RGB(125, 82, 47) : RGB(63, 109, 82), 1);
+        DrawTextBlock(dc, labels[index], RECT{x + 17, y, x + 151, y + 23},
+                      current ? RGB(128, 79, 44) : RGB(66, 80, 64),
+                      12, current, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
+void DrawInventoryWindow(HDC dc) {
+    FillRectangle(dc, RECT{22, 101, 384, 779}, RGB(249, 246, 228), RGB(130, 101, 68), 3);
+    DrawTextBlock(dc, L"소지품", RECT{43, 116, 354, 151}, RGB(55, 85, 69), 24, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawLine(dc, POINT{42, 158}, POINT{364, 158}, RGB(203, 187, 147), 2);
+    DrawTextBlock(dc, L"장비", RECT{44, 168, 350, 191}, RGB(136, 105, 68), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    FillRectangle(dc, RECT{43, 193, 363, 237}, RGB(239, 230, 199), RGB(201, 181, 139), 1);
+    FillRectangle(dc, RECT{54, 201, 82, 229}, RGB(137, 95, 60), RGB(95, 67, 47), 2);
+    DrawLine(dc, POINT{61, 221}, POINT{77, 204}, RGB(228, 195, 131), 3);
+    DrawTextBlock(dc, L"낚싯대", RECT{94, 198, 232, 230}, RGB(65, 76, 62), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"× 1", RECT{300, 198, 348, 230}, RGB(105, 85, 59), 15, true, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"어획물", RECT{44, 243, 350, 265}, RGB(136, 105, 68), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    const std::array<const wchar_t*, 6> names = {
+        L"은어", L"무늬송어", L"은빛 잉어", L"전갱이", L"참돔", L"고등어"
+    };
+    const std::array<COLORREF, 6> colors = {
+        RGB(108, 169, 178), RGB(134, 151, 179), RGB(171, 180, 164),
+        RGB(101, 157, 175), RGB(207, 139, 119), RGB(113, 145, 172)
+    };
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        const int y = 267 + static_cast<int>(index) * 33;
+        FillRectangle(dc, RECT{43, y, 363, y + 30},
+                      index % 2 == 0 ? RGB(246, 241, 220) : RGB(241, 235, 212),
+                      RGB(222, 209, 173), 1);
+        DrawFishSilhouette(dc, 68, y + 15, g_fishInventory[index] > 0 ? colors[index] : RGB(177, 178, 163), 9);
+        DrawTextBlock(dc, names[index], RECT{90, y + 2, 262, y + 28},
+                      g_fishInventory[index] > 0 ? RGB(59, 76, 67) : RGB(133, 129, 109),
+                      14, g_fishInventory[index] > 0, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextBlock(dc, L"× " + std::to_wstring(g_fishInventory[index]),
+                      RECT{278, y + 2, 350, y + 28}, RGB(100, 87, 63), 14, true,
+                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
+    DrawTextBlock(dc, L"섬 지도", RECT{44, 472, 350, 498}, RGB(136, 105, 68), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawInventoryIslandMap(dc);
+}
+
+void DrawSettingRow(HDC dc, RECT bounds, const std::wstring& title,
+                    const std::wstring& description, bool enabled) {
+    FillRectangle(dc, bounds, RGB(244, 239, 216), RGB(206, 189, 151), 1);
+    DrawTextBlock(dc, title, RECT{bounds.left + 14, bounds.top + 8, bounds.right - 94, bounds.top + 34},
+                  RGB(65, 79, 64), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, description, RECT{bounds.left + 14, bounds.top + 35, bounds.right - 92, bounds.bottom - 5},
+                  RGB(119, 111, 88), 12, false, DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+    const int switchX = bounds.right - 67;
+    const int switchY = bounds.top + 22;
+    FillRectangle(dc, RECT{switchX, switchY, switchX + 50, switchY + 25},
+                  enabled ? RGB(93, 151, 113) : RGB(164, 157, 133),
+                  enabled ? RGB(67, 118, 87) : RGB(126, 119, 100), 2);
+    FillEllipse(dc, enabled ? switchX + 27 : switchX + 3, switchY + 3,
+                enabled ? switchX + 47 : switchX + 23, switchY + 22,
+                RGB(250, 246, 227), RGB(132, 119, 91), 1);
+}
+
+void DrawNpcCard(HDC dc, RECT bounds, const std::wstring& name,
+                 const std::wstring& role, const std::wstring& introduction,
+                 const std::wstring& location, const std::wstring& initial,
+                 COLORREF avatarColor, bool currentlyHere) {
+    FillRectangle(dc, bounds, currentlyHere ? RGB(247, 237, 204) : RGB(245, 241, 221),
+                  currentlyHere ? RGB(189, 143, 68) : RGB(208, 194, 156), 2);
+    FillEllipse(dc, bounds.left + 14, bounds.top + 15, bounds.left + 67, bounds.top + 68,
+                avatarColor, RGB(96, 77, 55), 2);
+    DrawTextBlock(dc, initial, RECT{bounds.left + 20, bounds.top + 20, bounds.left + 61, bounds.top + 61},
+                  RGB(255, 247, 220), 22, true, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, name, RECT{bounds.left + 81, bounds.top + 12, bounds.right - 15, bounds.top + 39},
+                  RGB(55, 78, 65), 17, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, role, RECT{bounds.left + 82, bounds.top + 39, bounds.right - 15, bounds.top + 62},
+                  RGB(142, 103, 66), 13, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, introduction, RECT{bounds.left + 16, bounds.top + 73, bounds.right - 15, bounds.top + 103},
+                  RGB(82, 84, 69), 12, false, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    FillRectangle(dc, RECT{bounds.left + 14, bounds.bottom - 31, bounds.right - 14, bounds.bottom - 7},
+                  currentlyHere ? RGB(231, 211, 160) : RGB(234, 230, 209),
+                  currentlyHere ? RGB(189, 143, 68) : RGB(213, 201, 171), 1);
+    FillEllipse(dc, bounds.left + 23, bounds.bottom - 24, bounds.left + 34, bounds.bottom - 13,
+                currentlyHere ? RGB(207, 127, 57) : RGB(90, 142, 109),
+                currentlyHere ? RGB(149, 85, 43) : RGB(61, 109, 78), 1);
+    DrawTextBlock(dc, L"현재 위치 · " + location,
+                  RECT{bounds.left + 41, bounds.bottom - 29, bounds.right - 19, bounds.bottom - 9},
+                  currentlyHere ? RGB(123, 77, 41) : RGB(72, 86, 68),
+                  12, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+void DrawSettingsWindow(HDC dc) {
+    FillRectangle(dc, RECT{397, 101, 755, 779}, RGB(249, 246, 228), RGB(130, 101, 68), 3);
+    DrawTextBlock(dc, L"게임 설정", RECT{419, 116, 728, 151}, RGB(55, 85, 69), 24, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawLine(dc, POINT{418, 158}, POINT{734, 158}, RGB(203, 187, 147), 2);
+    DrawTextBlock(dc, L"화면과 연출", RECT{420, 170, 731, 191}, RGB(136, 105, 68), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawSettingRow(dc, RECT{417, 197, 735, 268}, L"물결 애니메이션",
+                   L"강과 바다의 물결 움직임", g_waterAnimationEnabled);
+    DrawTextBlock(dc, L"낚시 설정", RECT{420, 281, 731, 303}, RGB(136, 105, 68), 15, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawSettingRow(dc, RECT{417, 308, 735, 379}, L"낚시 도움 모드",
+                   L"입질 대기 시간을 늘리고 장력 상승을 완화", g_fishingAssistEnabled);
+    DrawSettingRow(dc, RECT{417, 389, 735, 460}, L"장력 계기 표시",
+                   L"물고기를 낚을 때 줄의 장력을 표시", g_showTensionMeter);
+    FillRectangle(dc, RECT{417, 481, 735, 655}, RGB(245, 241, 222), RGB(208, 194, 156), 1);
+    DrawTextBlock(dc, L"기본 조작", RECT{434, 495, 716, 523}, RGB(65, 79, 64), 16, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"WASD  이동", RECT{434, 535, 716, 558}, RGB(82, 84, 69), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"좌클릭  낚싯대 던지기 · 감기", RECT{434, 565, 716, 588}, RGB(82, 84, 69), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"우클릭  줄 장력 낮추기", RECT{434, 595, 716, 618}, RGB(82, 84, 69), 14, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    FillRectangle(dc, RECT{417, 676, 735, 749}, RGB(235, 228, 201), RGB(205, 184, 135), 1);
+    DrawTextBlock(dc, L"설정은 즉시 적용됩니다.", RECT{435, 690, 716, 716},
+                  RGB(103, 91, 65), 14, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"I 또는 Esc로 돌아가기", RECT{435, 718, 716, 741},
+                  RGB(121, 108, 79), 12, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+void DrawNpcWindow(HDC dc) {
+    FillRectangle(dc, RECT{768, 101, 1178, 779}, RGB(249, 246, 228), RGB(130, 101, 68), 3);
+    DrawTextBlock(dc, L"섬 주민 안내", RECT{790, 116, 1154, 151}, RGB(55, 85, 69), 24, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"소개와 현재 머무는 장소", RECT{790, 154, 1154, 176},
+                  RGB(126, 108, 76), 13, false, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawNpcCard(dc, RECT{784, 185, 1162, 322},
+                L"윤해란", L"새벽 시장 생선 상인",
+                L"부모님과 오래 거래해 온 상인. 갓 잡은 생선의 값을 정직하게 매긴다.",
+                L"해무 포구 · 새벽 시장", L"해", RGB(181, 111, 76),
+                g_currentLocation == island::LocationId::Harbor);
+    DrawNpcCard(dc, RECT{784, 330, 1162, 467},
+                L"강태오", L"포구의 배 수리공",
+                L"작은 배와 낚싯대를 고친다. 섬 바깥 물길에도 밝다.",
+                L"해무 포구 · 부두 작업대", L"태", RGB(99, 132, 102),
+                g_currentLocation == island::LocationId::Harbor);
+    DrawNpcCard(dc, RECT{784, 475, 1162, 612},
+                L"박소담", L"강변 약초꾼",
+                L"달빛강 주변을 살핀다. 계절마다 달라지는 물고기 이야기를 들려준다.",
+                L"달빛강 · 나무다리", L"소", RGB(91, 145, 151),
+                g_currentLocation == island::LocationId::River);
+    DrawNpcCard(dc, RECT{784, 620, 1162, 757},
+                L"정하진", L"바람곶 등대지기",
+                L"오래된 등대와 부모님의 기록을 지켜 온 주민이다.",
+                L"바람곶 · 등대", L"진", RGB(162, 139, 83),
+                g_currentLocation == island::LocationId::WindCape);
+}
+
+void DrawJournalDashboard(HDC dc, RECT client) {
+    const int saved = SaveDC(dc);
+    SetMapMode(dc, MM_ANISOTROPIC);
+    SetWindowExtEx(dc, HomeCanvasWidth, HomeCanvasHeight, nullptr);
+    SetViewportExtEx(dc, std::max(1L, client.right), std::max(1L, client.bottom), nullptr);
+    FillRectangle(dc, RECT{0, 0, 1200, 800}, RGB(49, 76, 69), RGB(49, 76, 69));
+    FillRectangle(dc, RECT{22, 17, 1178, 84}, RGB(244, 237, 207), RGB(130, 101, 68), 3);
+    DrawTextBlock(dc, L"해무섬 생활 기록", RECT{43, 25, 660, 61},
+                  RGB(50, 83, 70), 25, true, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"소지품 · 섬 지도 · 게임 설정 · 주민 안내",
+                  RECT{45, 59, 740, 78}, RGB(126, 104, 72), 13, false,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"I 또는 Esc  닫기", RECT{910, 35, 1157, 67},
+                  RGB(85, 83, 65), 15, true, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+    DrawInventoryWindow(dc);
+    DrawSettingsWindow(dc);
+    DrawNpcWindow(dc);
     RestoreDC(dc, saved);
 }
 
@@ -972,12 +1199,18 @@ void DrawSidePanel(HDC dc, RECT client, const MapLayout& layout) {
     DrawTextAt(dc, L"Enter  장소 살펴보기", x, y, RGB(77, 88, 77), 15, false);
     y += 23;
     DrawTextAt(dc, L"Esc  게임 종료", x, y, RGB(77, 88, 77), 15, false);
+    y += 23;
+    DrawTextAt(dc, L"I  인벤토리 · 섬 지도 · 주민 안내", x, y, RGB(77, 88, 77), 14, false);
 
     RECT status{x, panel.bottom - 72, panel.right - 20, panel.bottom - 20};
     DrawTextBlock(dc, g_status, status, RGB(154, 93, 71), 15, true, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
 void DrawGame(HDC dc, RECT client) {
+    if (g_scene == SceneMode::JournalDashboard) {
+        DrawJournalDashboard(dc, client);
+        return;
+    }
     if (g_scene == SceneMode::HomeExterior) {
         DrawHomeExterior(dc, client);
         return;
@@ -1143,7 +1376,7 @@ void MoveFishingPlayer(HWND window, int deltaX, int deltaY) {
     InvalidateRect(window, nullptr, FALSE);
 }
 
-POINT FishingCanvasPoint(HWND window, LPARAM lParam) {
+POINT CanvasPointFromClient(HWND window, LPARAM lParam) {
     RECT client{};
     GetClientRect(window, &client);
     const LONG width = std::max(1L, client.right);
@@ -1167,10 +1400,14 @@ void CatchFish(HWND window) {
     const wchar_t* seaFish[] = {L"전갱이", L"참돔", L"고등어"};
     std::wstring caughtName;
     if (atSea) {
+        const int fishIndex = 3 + g_seaFishCaught % 3;
         caughtName = seaFish[g_seaFishCaught % 3];
+        ++g_fishInventory[static_cast<std::size_t>(fishIndex)];
         ++g_seaFishCaught;
     } else {
+        const int fishIndex = g_riverFishCaught % 3;
         caughtName = riverFish[g_riverFishCaught % 3];
+        ++g_fishInventory[static_cast<std::size_t>(fishIndex)];
         ++g_riverFishCaught;
     }
     g_fishingStatus = caughtName + L"를 낚았습니다! 어획 기록에 담았습니다.";
@@ -1216,7 +1453,7 @@ void HandleFishingMouse(HWND window, bool leftButton, POINT point) {
             return;
         case FishingPhase::Hooked:
             g_reelProgress = std::min(100, g_reelProgress + 20);
-            g_lineTension = std::min(100, g_lineTension + 23);
+            g_lineTension = std::min(100, g_lineTension + (g_fishingAssistEnabled ? 15 : 23));
             if (g_lineTension >= 100) {
                 LoseFish(window);
             } else if (g_reelProgress >= 100) {
@@ -1234,6 +1471,21 @@ void HandleFishingMouse(HWND window, bool leftButton, POINT point) {
     }
 }
 
+void HandleDashboardClick(HWND window, LPARAM lParam) {
+    const POINT point = CanvasPointFromClient(window, lParam);
+    const RECT waterRow{417, 197, 735, 268};
+    const RECT assistRow{417, 308, 735, 379};
+    const RECT tensionRow{417, 389, 735, 460};
+    if (PtInRect(&waterRow, point)) {
+        g_waterAnimationEnabled = !g_waterAnimationEnabled;
+    } else if (PtInRect(&assistRow, point)) {
+        g_fishingAssistEnabled = !g_fishingAssistEnabled;
+    } else if (PtInRect(&tensionRow, point)) {
+        g_showTensionMeter = !g_showTensionMeter;
+    }
+    InvalidateRect(window, nullptr, TRUE);
+}
+
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE:
@@ -1246,12 +1498,14 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
     case WM_TIMER:
         if (wParam == FishingTimerId &&
             (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing)) {
-            ++g_waterAnimationFrame;
+            if (g_waterAnimationEnabled) {
+                ++g_waterAnimationFrame;
+            }
             if (g_fishingPhase == FishingPhase::WaitingForBite) {
                 g_biteDelayMs -= 100;
                 if (g_biteDelayMs <= 0) {
                     g_fishingPhase = FishingPhase::Bite;
-                    g_biteWindowMs = 2600;
+                    g_biteWindowMs = g_fishingAssistEnabled ? 5200 : 2600;
                     g_fishingStatus = L"입질입니다! 찌가 흔들릴 때 좌클릭해 낚아채세요.";
                 }
             } else if (g_fishingPhase == FishingPhase::Bite) {
@@ -1266,20 +1520,37 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
         return 0;
 
     case WM_LBUTTONDOWN:
+        if (g_scene == SceneMode::JournalDashboard) {
+            HandleDashboardClick(window, lParam);
+            return 0;
+        }
         if (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing) {
-            HandleFishingMouse(window, true, FishingCanvasPoint(window, lParam));
+            HandleFishingMouse(window, true, CanvasPointFromClient(window, lParam));
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
 
     case WM_RBUTTONDOWN:
         if (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing) {
-            HandleFishingMouse(window, false, FishingCanvasPoint(window, lParam));
+            HandleFishingMouse(window, false, CanvasPointFromClient(window, lParam));
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
 
     case WM_KEYDOWN:
+        if (g_scene == SceneMode::JournalDashboard) {
+            if (wParam == VK_ESCAPE || wParam == 'I') {
+                g_scene = g_dashboardReturnScene;
+                InvalidateRect(window, nullptr, TRUE);
+            }
+            return 0;
+        }
+        if (wParam == 'I') {
+            g_dashboardReturnScene = g_scene;
+            g_scene = SceneMode::JournalDashboard;
+            InvalidateRect(window, nullptr, TRUE);
+            return 0;
+        }
         if (g_scene == SceneMode::RiverFishing || g_scene == SceneMode::SeaFishing) {
             switch (wParam) {
             case VK_UP: case 'W': MoveFishingPlayer(window, 0, -22); return 0;
